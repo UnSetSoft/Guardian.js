@@ -14,8 +14,7 @@ const { version } = require("../package.json");
 let config = {
   minAge: 0,
   mode: "block",
-  exclude: [],
-  includeDev: true
+  exclude: []
 };
 
 const configFiles = ["guardian.config.json", ".guardianrc.json"];
@@ -51,6 +50,12 @@ const argv = yargs(hideBin(process.argv))
           alias: "m",
           type: "number",
           describe: "Minimum version age in days",
+        })
+        .option("dev", {
+          type: "boolean",
+          alias: "D",
+          describe: "Install as devDependency (--save-dev)",
+          default: false,
         }),
     (argv) => Install(argv)
   )
@@ -72,7 +77,7 @@ function Install(argv) {
     console.error("❌ You must specify at least one package to install");
     process.exit(1);
   }
-  run(argv.packages);
+  run(argv.packages, argv.dev);
 }
 
 function parseMinAge(input) {
@@ -98,12 +103,12 @@ function parseMinAge(input) {
 }
 
 
-async function checkAndInstall(pkgSpec) {
+async function checkAndInstall(pkgSpec, asDev = false) {
   const [pkg, versionRange] = pkgSpec.split("@");
 
   if (config.exclude.includes(pkg)) {
     console.log(`⚠️  ${pkg} is excluded from restrictions. Installing without validation.`);
-    execSync(`npm install ${pkgSpec}`, { stdio: "inherit" });
+    execSync(`npm install ${pkgSpec}${asDev ? " --save-dev" : ""}`, { stdio: "inherit" });
     return;
   }
 
@@ -144,11 +149,11 @@ async function checkAndInstall(pkgSpec) {
   }
 
   console.log(`✅ Installing ${pkg}@${resolvedVersion} (published ${ageDays} days ago)`);
-  execSync(`npm install ${pkg}@${resolvedVersion}`, { stdio: "inherit" });
+  execSync(`npm install ${pkg}@${resolvedVersion}${asDev ? " --save-dev" : ""}`, { stdio: "inherit" });
 }
 
-async function run(packages) {
+async function run(packages, asDev = false) {
   for (const pkgSpec of packages) {
-    await checkAndInstall(pkgSpec);
+    await checkAndInstall(pkgSpec, asDev);
   }
 }

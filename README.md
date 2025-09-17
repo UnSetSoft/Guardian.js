@@ -34,9 +34,23 @@ guardian install react@18 lodash@5 --min-age 30
 ```
 
 ```bash
-guardian install react@18 lodash@5 --min-age 2w
+guardian install Jlib --min-age 24hs
 ```
 
+To install a package as a devDependency, use the `--dev` or `-D` flag:
 ```bash
-guardian install react@18 lodash@5 --min-age 24hs
+guardian install webpack --dev
 ```
+
+## Use config file
+
+You can create a `guardian.config.json` file in your project root to set default options. For example:
+
+```json
+{
+  "minAge": 30,
+  "exclude": [
+    "react",
+    "lodash"
+  ]
+}
