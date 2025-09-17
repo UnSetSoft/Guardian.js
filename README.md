@@ -30,7 +30,7 @@ supported formats:
 ## Example
 
 ```bash
-guardian install react@18 lodash@5 --min-age 30
+guardian install react@18 lodash@4 --min-age 30
 ```
 
 ```bash
