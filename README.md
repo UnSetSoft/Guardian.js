@@ -55,7 +55,8 @@ You can create a `guardian.config.json` file in your project root to set default
   ],
   "exactInstall": false
 }
-
+```
+### Configuration Options
 - `minAge`: Default minimum age in days for packages.
 - `exclude`: An array of package names to exclude from age restrictions.
 - `exactInstall`: Boolean to determine if packages should be installed with exact versions by default. Alternatively, you can use the `--exact` flag in the CLI.
