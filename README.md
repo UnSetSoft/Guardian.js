@@ -7,7 +7,7 @@ Guardian.js is a command-line tool that helps you install npm packages while ens
 You can install Guardian.js globally using npm:
 
 ```bash
-npm install -g guardian.js
+npm install -g @unsetsoft/guardian.js
 ```
 
 ## Usage
