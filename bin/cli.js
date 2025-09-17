@@ -17,7 +17,7 @@ let config = {
   exclude: []
 };
 
-const configFiles = ["guardian.config.json", ".guardianrc.json"];
+const configFiles = ["shield.config.json", ".shieldrc.json"];
 for (const file of configFiles) {
   const fullPath = path.join(process.cwd(), file);
   if (existsSync(fullPath)) {
@@ -34,7 +34,7 @@ for (const file of configFiles) {
 }
 
 const argv = yargs(hideBin(process.argv))
-  .scriptName("guardian")
+  .scriptName("shield")
   .usage("Use: $0 <command> [options]")
   .version(version)
   .command(

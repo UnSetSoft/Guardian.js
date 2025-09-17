@@ -1,15 +1,15 @@
 {
-  "name": "guardian.js",
+  "name": "shield.js",
   "version": "1.0.0-beta.1",
   "description": "NPM install guard",
   "author": "UnSetSoft <admin@unsetsoft.com>",
   "license": "MPL-2.0",
   "main": "./bin/cli.js",
   "bin": {
-    "guardian": "./bin/cli.js"
+    "shield": "./bin/cli.js"
   },
   "scripts": {
-    "guardian": "node ./bin/cli.js"
+    "shield": "node ./bin/cli.js"
   },
   "type": "module",
   "engines": {
