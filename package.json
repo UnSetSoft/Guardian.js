@@ -1,12 +1,16 @@
 {
   "name": "@unsetsoft/guardian.js",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "description": "NPM install guard",
   "author": "UnSetSoft <admin@unsetsoft.com>",
   "license": "MPL-2.0",
   "main": "./bin/cli.js",
   "bin": {
     "guardian": "./bin/cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unsetsoft/guardian.js.git"
   },
   "scripts": {
     "guardian": "node ./bin/cli.js"
