@@ -6,7 +6,6 @@ import path from "path";
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 import semver from "semver";
-
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
@@ -15,7 +14,7 @@ let config = {
   minAge: 0,
   mode: "block",
   exclude: [],
-  exactInstall: false
+  exactInstall: false,
 };
 
 const configFiles = ["guardian.config.json", ".guardianrc.json"];
@@ -44,19 +43,18 @@ const argv = yargs(hideBin(process.argv))
     (y) =>
       y
         .positional("packages", {
-          describe: "Packages to install, e.g.: react@18 lodash@5",
+          describe: "Packages to install, e.g.: react@18 lodash@5 @scope/pkg@1.2.3",
           type: "string",
         })
         .option("min-age", {
           alias: "m",
-          type: "number",
-          describe: "Minimum version age in days",
+          type: "string",
+          describe: "Minimum version age (e.g. 30, 1d, 1w, 1m, 24h, 24hs)",
         })
         .option("dev", {
           type: "boolean",
           alias: "D",
           describe: "Install as devDependency (--save-dev)",
-
           default: false,
         })
         .option("exact", {
@@ -71,7 +69,6 @@ const argv = yargs(hideBin(process.argv))
   .argv;
 
 function Install(argv) {
-  // Implementation for the Install function
   if (argv["min-age"]) {
     try {
       config.minAge = parseMinAge(argv["min-age"]);
@@ -88,52 +85,116 @@ function Install(argv) {
 }
 
 function parseMinAge(input) {
-  if (typeof input === "number") return input; // already in days
-
+  if (/^\d+$/.test(input)) return parseInt(input, 10);
   const match = input.match(/^(\d+)(d|w|m|h|hs)$/i);
-  if (!match) {
-    throw new Error(`Invalid format for --min-age: ${input}`);
-  }
-
+  if (!match) throw new Error(`Invalid format for --min-age: ${input}`);
   const value = parseInt(match[1], 10);
   const unit = match[2].toLowerCase();
-
   switch (unit) {
     case "d": return value;
     case "w": return value * 7;
     case "m": return value * 30;
-    case "h": return value / 24 / 60;
+    case "h": return value / 24;
     case "hs": return value / 24;
-    default:
-      throw new Error(`Unsupported unit for --min-age: ${unit}`);
+    default: throw new Error(`Unsupported unit for --min-age: ${unit}`);
+  }
+}
+
+function splitPkgSpec(pkgSpec) {
+  const atIndex = pkgSpec.lastIndexOf("@");
+  if (pkgSpec.startsWith("@")) {
+    if (atIndex > 0) return [pkgSpec.slice(0, atIndex), pkgSpec.slice(atIndex + 1)];
+    return [pkgSpec, null];
+  } else {
+    if (atIndex > 0) return [pkgSpec.slice(0, atIndex), pkgSpec.slice(atIndex + 1)];
+    return [pkgSpec, null];
+  }
+}
+
+async function checkOSSIndex(pkg, version) {
+  try {
+    const coords = [`pkg:npm/${pkg}@${version}`];
+    const res = await fetch("https://ossindex.sonatype.org/api/v3/component-report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ coordinates: coords }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const report = data[0];
+
+
+    if (report.vulnerabilities && report.vulnerabilities.length > 0) {
+      console.error(`🚨 OSS Index found issues in ${pkg}@${version}:`);
+      for (const vuln of report.vulnerabilities) console.error(` - [${vuln.severity}] ${vuln.title}`);
+      if (config.mode === "block") process.exit(1);
+      if (config.mode === "warn") console.warn("⚠️ Installation will proceed due to 'warn' mode.");
+    } else {
+      console.log(`✅ No OSS Index issues found for ${pkg}@${version}`);
+    }
+  } catch (err) {
+    console.warn(`⚠️ Could not check OSS Index for ${pkg}@${version}: ${err.message}`);
+  }
+}
+
+async function checkVulnerabilities(pkg, version) {
+  try {
+    const output = execSync(`npm audit --json --package=${pkg}@${version}`, { encoding: "utf8" });
+    const audit = JSON.parse(output);
+
+    const vulnList = Object.values(audit.vulnerabilities).filter(v => v.name === pkg);
+
+    if (vulnList.length > 0) {
+      console.error(`🚨 Vulnerabilities found in ${pkg}@${version}:`);
+      for (const vuln of vulnList) {
+        console.error(` - ${vuln.name} (${vuln.severity}) → ${vuln.title || "Security issue"}`);
+      }
+      if (config.mode === "block") process.exit(1);
+      if (config.mode === "warn") console.warn("⚠️ Installation will proceed due to 'warn' mode.");
+
+    } else {
+      console.log(`✅ No vulnerabilities found for ${pkg}@${version}`);
+    }
+  } catch (err) {
+    if (err.stdout) {
+      try {
+        const audit = JSON.parse(err.stdout.toString());
+        const vulnList = Object.values(audit.vulnerabilities).filter(v => v.name === pkg);
+
+        if (vulnList.length > 0) {
+          console.error(`🚨 Vulnerabilities found in ${pkg}@${version}:`);
+          for (const vuln of vulnList) {
+            console.error(` - ${vuln.name} (${vuln.severity}) → ${vuln.title || "Security issue"}`);
+          }
+          if (config.mode === "block") process.exit(1);
+          if (config.mode === "warn") console.warn("⚠️ Installation will proceed due to 'warn' mode.");
+
+        } else {
+          console.log(`✅ No vulnerabilities found for ${pkg}@${version}`);
+        }
+      } catch (_) { }
+    }
   }
 }
 
 
-async function checkAndInstall(pkgSpec, asDev = false) {
-  const [pkg, versionRange] = pkgSpec.split("@");
-
+async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
+  const [pkg, versionRange] = splitPkgSpec(pkgSpec);
   if (config.exclude.includes(pkg)) {
     console.log(`⚠️  ${pkg} is excluded from restrictions. Installing without validation.`);
-    execSync(`npm install ${pkgSpec}${asDev ? " --save-dev" : ""}${arguments[2] || config.exactInstall ? " --save-exact" : ""}`, { stdio: "inherit" });
+    execSync(`npm install ${pkgSpec}${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { stdio: "inherit" });
     return;
   }
-
   const res = await fetch(`https://registry.npmjs.org/${pkg}`);
   if (!res.ok) {
     console.error(`❌ Failed to fetch metadata for ${pkg}`);
     process.exit(1);
   }
-
   const meta = await res.json();
   const versions = Object.keys(meta.versions);
-
-  // Resolve newest version that satisfies the range
   let resolvedVersion;
-  if (!versionRange) {
-    resolvedVersion = meta["dist-tags"].latest;
-  } else {
-    // Use semver to find the highest version that satisfies
+  if (!versionRange) resolvedVersion = meta["dist-tags"].latest;
+  else {
     const max = semver.maxSatisfying(versions, versionRange);
     if (!max) {
       console.error(`❌ No version of ${pkg} satisfies ${versionRange}`);
@@ -141,26 +202,26 @@ async function checkAndInstall(pkgSpec, asDev = false) {
     }
     resolvedVersion = max;
   }
-
   const published = new Date(meta.time[resolvedVersion]).getTime();
   const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
-
   if (ageDays < config.minAge) {
     const msg = `🚫 ${pkg}@${resolvedVersion} is too new (${ageDays} days, minimum ${config.minAge})`;
-    if (config.mode === "block") {
-      console.error(msg);
-      process.exit(1);
-    } else {
-      console.warn(`⚠️ [WARN] ${msg}`);
-    }
+    console.error(msg);
+    process.exit(1);
   }
 
+  await checkVulnerabilities(pkg, resolvedVersion);
+
+  if (config.mode === "block") {
+
+    await checkOSSIndex(pkg, resolvedVersion);
+  }
   console.log(`✅ Installing ${pkg}@${resolvedVersion} (published ${ageDays} days ago)`);
-  execSync(`npm install ${pkg}@${resolvedVersion}${asDev ? " --save-dev" : ""}${arguments[2] || config.exactInstall ? " --save-exact" : ""}`, { stdio: "inherit" });
+  execSync(`npm install ${pkg}@${resolvedVersion} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { stdio: "inherit" });
 }
 
-async function run(packages, asDev = false) {
+async function run(packages, asDev = false, exact = false) {
   for (const pkgSpec of packages) {
-    await checkAndInstall(pkgSpec, asDev, arguments[2]);
+    await checkAndInstall(pkgSpec, asDev, exact);
   }
 }
