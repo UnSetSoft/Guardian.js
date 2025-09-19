@@ -49,6 +49,7 @@ You can create a `guardian.config.json` file in your project root to set default
 ```json
 {
   "minAge": 30,
+  "mode": "block",
   "exclude": [
     "react",
     "lodash"
@@ -57,6 +58,15 @@ You can create a `guardian.config.json` file in your project root to set default
 }
 ```
 ### Configuration Options
-- `minAge`: Default minimum age in days for packages.
+- `minAge`: Default minimum age in days for packages. This can be overridden by the `--min-age` flag in the CLI. valid formats are:
+  - `0` (days) integer
+  - `xw` (weeks) string
+  - `xm` (months) string
+  - `xh` (hour) string
+  - `xhs` (hours) string
 - `exclude`: An array of package names to exclude from age restrictions.
 - `exactInstall`: Boolean to determine if packages should be installed with exact versions by default. Alternatively, you can use the `--exact` flag in the CLI.
+- `mode`: Defines the behavior when vulnerabilities are found. Options are:
+  - `block`: Prevent installation if vulnerabilities are found. This is the default behavior.
+  - `warn`: Log a warning but allow installation to proceed.
+  - `off`: Hide vulnerability logs and allow installation to proceed.

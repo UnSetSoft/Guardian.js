@@ -23,6 +23,7 @@ for (const file of configFiles) {
   if (existsSync(fullPath)) {
     try {
       const userConfig = JSON.parse(readFileSync(fullPath, "utf8"));
+      if (userConfig.minAge !== undefined) userConfig.minAge = parseMinAge(userConfig.minAge);
       config = { ...config, ...userConfig };
       console.log(`⚙️  Configuration loaded from ${file}`);
       break;
@@ -72,6 +73,7 @@ function Install(argv) {
   if (argv["min-age"]) {
     try {
       config.minAge = parseMinAge(argv["min-age"]);
+
     } catch (err) {
       console.error(err.message);
       process.exit(1);
@@ -85,9 +87,10 @@ function Install(argv) {
 }
 
 function parseMinAge(input) {
+  if (typeof input === "number") return input;
   if (/^\d+$/.test(input)) return parseInt(input, 10);
   const match = input.match(/^(\d+)(d|w|m|h|hs)$/i);
-  if (!match) throw new Error(`Invalid format for --min-age: ${input}`);
+  if (!match) throw new Error(`Invalid format for minAge: ${input}`);
   const value = parseInt(match[1], 10);
   const unit = match[2].toLowerCase();
   switch (unit) {
@@ -96,7 +99,7 @@ function parseMinAge(input) {
     case "m": return value * 30;
     case "h": return value / 24;
     case "hs": return value / 24;
-    default: throw new Error(`Unsupported unit for --min-age: ${unit}`);
+    default: throw new Error(`Unsupported unit for minAge: ${unit}`);
   }
 }
 
@@ -145,9 +148,11 @@ async function checkVulnerabilities(pkg, version) {
     const vulnList = Object.values(audit.vulnerabilities).filter(v => v.name === pkg);
 
     if (vulnList.length > 0) {
-      console.error(`🚨 Vulnerabilities found in ${pkg}@${version}:`);
-      for (const vuln of vulnList) {
-        console.error(` - ${vuln.name} (${vuln.severity}) → ${vuln.title || "Security issue"}`);
+      if (config.mode === "block" || config.mode === "warn") {
+        console.error(`🚨 Vulnerabilities found in ${pkg}@${version}:`);
+        for (const vuln of vulnList) {
+          console.error(` - ${vuln.name} (${vuln.severity}) → ${vuln.title || "Security issue"}`);
+        }
       }
       if (config.mode === "block") process.exit(1);
       if (config.mode === "warn") console.warn("⚠️ Installation will proceed due to 'warn' mode.");
@@ -162,10 +167,14 @@ async function checkVulnerabilities(pkg, version) {
         const vulnList = Object.values(audit.vulnerabilities).filter(v => v.name === pkg);
 
         if (vulnList.length > 0) {
-          console.error(`🚨 Vulnerabilities found in ${pkg}@${version}:`);
-          for (const vuln of vulnList) {
-            console.error(` - ${vuln.name} (${vuln.severity}) → ${vuln.title || "Security issue"}`);
+
+          if (config.mode === "block" || config.mode === "warn") {
+            console.error(`🚨 Vulnerabilities found in ${pkg}@${version}:`);
+            for (const vuln of vulnList) {
+              console.error(` - ${vuln.name} (${vuln.severity}) → ${vuln.title || "Security issue"}`);
+            }
           }
+
           if (config.mode === "block") process.exit(1);
           if (config.mode === "warn") console.warn("⚠️ Installation will proceed due to 'warn' mode.");
 
@@ -205,7 +214,7 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
   const published = new Date(meta.time[resolvedVersion]).getTime();
   const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
   if (ageDays < config.minAge) {
-    const msg = `🚫 ${pkg}@${resolvedVersion} is too new (${ageDays} days, minimum ${config.minAge})`;
+    const msg = `🚫 ${pkg}@${resolvedVersion} is too new (${ageDays} days)`;
     console.error(msg);
     process.exit(1);
   }
@@ -220,7 +229,13 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
   execSync(`npm install ${pkg}@${resolvedVersion} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { stdio: "inherit" });
 }
 
+
 async function run(packages, asDev = false, exact = false) {
+  const validModes = ["block", "warn", "off"];
+  if (!validModes.includes(config.mode)) {
+    console.error(`❌ Invalid mode in configuration: ${config.mode}. Valid options are: ${validModes.join(", ")}`);
+    process.exit(1);
+  }
   for (const pkgSpec of packages) {
     await checkAndInstall(pkgSpec, asDev, exact);
   }
