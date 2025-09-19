@@ -114,32 +114,6 @@ function splitPkgSpec(pkgSpec) {
   }
 }
 
-async function checkOSSIndex(pkg, version) {
-  try {
-    const coords = [`pkg:npm/${pkg}@${version}`];
-    const res = await fetch("https://ossindex.sonatype.org/api/v3/component-report", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ coordinates: coords }),
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    const report = data[0];
-
-
-    if (report.vulnerabilities && report.vulnerabilities.length > 0) {
-      console.error(`🚨 OSS Index found issues in ${pkg}@${version}:`);
-      for (const vuln of report.vulnerabilities) console.error(` - [${vuln.severity}] ${vuln.title}`);
-      if (config.mode === "block") process.exit(1);
-      if (config.mode === "warn") console.warn("⚠️ Installation will proceed due to 'warn' mode.");
-    } else {
-      console.log(`✅ No OSS Index issues found for ${pkg}@${version}`);
-    }
-  } catch (err) {
-    console.warn(`⚠️ Could not check OSS Index for ${pkg}@${version}: ${err.message}`);
-  }
-}
-
 async function checkVulnerabilities(pkg, version) {
   try {
     const output = execSync(`npm audit --json --package=${pkg}@${version}`, { encoding: "utf8" });
@@ -221,10 +195,6 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
 
   await checkVulnerabilities(pkg, resolvedVersion);
 
-  if (config.mode === "block") {
-
-    await checkOSSIndex(pkg, resolvedVersion);
-  }
   console.log(`✅ Installing ${pkg}@${resolvedVersion} (published ${ageDays} days ago)`);
   execSync(`npm install ${pkg}@${resolvedVersion} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { stdio: "inherit" });
 }
