@@ -34,7 +34,7 @@ guardian install react@18 lodash@4 --min-age 30
 ```
 
 ```bash
-guardian install Jlib --min-age 24hs
+guardian install @unsetsoft/jlib --min-age 24hs
 ```
 
 To install a package as a devDependency, use the `--dev` or `-D` flag:
