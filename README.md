@@ -1,6 +1,6 @@
 # Guardian.js
 
-Guardian.js is a command-line tool that helps you install npm packages while ensuring that the packages meet a minimum release age requirement. This is particularly useful for avoiding newly released packages.
+Guardian.js is a command-line tool that helps you install npm packages while ensuring that the packages meet a minimum release age requirement. This is particularly useful for avoiding newly released packages. Also it can block or warn about known vulnerabilities. 
 
 ## Installation
 
@@ -67,6 +67,6 @@ You can create a `guardian.config.json` file in your project root to set default
 - `exclude`: An array of package names to exclude from age restrictions.
 - `exactInstall`: Boolean to determine if packages should be installed with exact versions by default. Alternatively, you can use the `--exact` flag in the CLI.
 - `mode`: Defines the behavior when vulnerabilities are found. Options are:
-  - `block`: Prevent installation if vulnerabilities are found. This is the default behavior.
+  - `block`: Prevent installation if vulnerabilities or problems are found. This is the default behavior.
   - `warn`: Log a warning but allow installation to proceed.
   - `off`: Hide vulnerability logs and allow installation to proceed.
