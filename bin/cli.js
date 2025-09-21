@@ -63,7 +63,22 @@ const argv = yargs(hideBin(process.argv))
           describe: "Install exact version (--save-exact)",
           default: false,
         }),
-    (argv) => Install(argv)
+    (argv) => Install(argv))
+  .command(
+    "audit [packages..]",
+    "Audit packages for vulnerabilities",
+    (y) =>
+      y
+        .positional("packages", {
+          describe: "Packages to audit, e.g.: react@18 lodash@5 @scope/pkg@1.2.3",
+          type: "string",
+        })
+        .option("min-age", {
+          alias: "m",
+          type: "string",
+          describe: "Minimum version age (e.g. 30, 1d, 1w, 1m, 24h, 24hs)",
+        }),
+    (argv) => runAudit(argv)
   )
   .demandCommand(1, "You must specify a command")
   .help()
@@ -114,46 +129,121 @@ function splitPkgSpec(pkgSpec) {
   }
 }
 
-async function checkVulnerabilities(pkg, version) {
+const severityObj = {
+  low: 1,
+  moderate: 2,
+  high: 3,
+  critical: 4
+}
+
+
+async function checkVulnerabilities(pkg) {
   try {
-    const output = execSync(`npm audit --json --package=${pkg}@${version}`, { encoding: "utf8" });
+    const output = execSync(`npm audit --json`, { encoding: "utf8" });
     const audit = JSON.parse(output);
 
-    const vulnList = Object.values(audit.vulnerabilities).filter(v => v.name === pkg);
+    // Acceso directo al paquete específico
+    const vuln = audit.vulnerabilities[pkg];
 
-    if (vulnList.length > 0) {
-      if (config.mode === "block" || config.mode === "warn") {
-        console.error(`🚨 Vulnerabilities found in ${pkg}@${version}:`);
-        for (const vuln of vulnList) {
-          console.error(` - ${vuln.name} (${vuln.severity}) → ${vuln.title || "Security issue"}`);
+    if (vuln) {
+
+      const getSeverityValue = (level) => severityObj[level] || 1;
+
+      const vulnSeverity = getSeverityValue(vuln.severity);
+
+      const viaSeverity = Array.isArray(vuln.via)
+        ? vuln.via.reduce((max, issue) => {
+          if (typeof issue === "object" && issue.severity) {
+            const severityValue = getSeverityValue(issue.severity);
+            return severityValue > max ? severityValue : max;
+          }
+          return max;
+        }, 0)
+        : 0;
+
+
+      const highestSeverity = Math.max(vulnSeverity, viaSeverity);
+
+      if (vuln.via.length >= 1) {
+        console.error(`🚨 Vulnerabilities found in ${pkg}:`);
+        if (typeof vuln.via === "object" && !Array.isArray(vuln.via)) {
+          for (const issue of Object.values(vuln.via)) {
+            console.error(` - ${issue} (${issue.severity}) → ${issue.url}`);
+          }
+        } else {
+          for (const issue of vuln.via) {
+            if (typeof issue === "object" && issue.title && issue.severity && issue.url) {
+              console.error(` - ${issue.title} (${issue.severity}) → ${issue.url}`);
+            } else {
+              console.error(` - ${issue} (dependency level)`);
+            }
+          }
         }
+      } else {
+        console.error(`🚨 Vulnerabilities found in ${pkg}`);
       }
-      if (config.mode === "block") process.exit(1);
-      if (config.mode === "warn") console.warn("⚠️ Installation will proceed due to 'warn' mode.");
 
+
+      if (config.mode === "block" && highestSeverity >= 3) {
+        console.error(`For security, the package ${pkg} was uninstalled. Rason: This package has high or critical vulnerabilities.`);
+        execSync(`npm uninstall ${pkg} --no-audit`, { stdio: "inherit" });
+
+      }
+      if (config.mode === "warn") console.warn("⚠️ Installation will proceed due to 'warn' mode.");
     } else {
-      console.log(`✅ No vulnerabilities found for ${pkg}@${version}`);
+      console.log(`✅ No vulnerabilities found for ${pkg}`);
     }
   } catch (err) {
     if (err.stdout) {
       try {
         const audit = JSON.parse(err.stdout.toString());
-        const vulnList = Object.values(audit.vulnerabilities).filter(v => v.name === pkg);
+        const vuln = audit.vulnerabilities[pkg];
 
-        if (vulnList.length > 0) {
+        if (vuln) {
 
-          if (config.mode === "block" || config.mode === "warn") {
-            console.error(`🚨 Vulnerabilities found in ${pkg}@${version}:`);
-            for (const vuln of vulnList) {
-              console.error(` - ${vuln.name} (${vuln.severity}) → ${vuln.title || "Security issue"}`);
+          const getSeverityValue = (level) => severityObj[level] || 1;
+
+          const vulnSeverity = getSeverityValue(vuln.severity);
+          const viaSeverity = Array.isArray(vuln.via)
+            ? vuln.via.reduce((max, issue) => {
+              if (typeof issue === "object" && issue.severity) {
+                const severityValue = getSeverityValue(issue.severity);
+                return severityValue > max ? severityValue : max;
+              }
+              return max;
+            }, 0)
+            : 0;
+
+
+          const highestSeverity = Math.max(vulnSeverity, viaSeverity);
+
+          if (vuln.via.length >= 1) {
+            console.error(`🚨 Vulnerabilities found in ${pkg}:`);
+            if (typeof vuln.via === "object" && !Array.isArray(vuln.via)) {
+              for (const issue of Object.values(vuln.via)) {
+                console.error(` - ${issue} (${issue.severity}) → ${issue.url}`);
+              }
+            } else {
+              for (const issue of vuln.via) {
+                if (typeof issue === "object" && issue.title && issue.severity && issue.url) {
+                  console.error(` - ${issue.title} (${issue.severity}) → ${issue.url}`);
+                } else {
+                  console.error(` - ${issue} [sub-dependency level] recommended action: send a issue to the maintainer of this sub-dependency.`);
+                }
+              }
             }
+          } else {
+            console.error(`🚨 Vulnerabilities found in ${pkg}`);
           }
 
-          if (config.mode === "block") process.exit(1);
-          if (config.mode === "warn") console.warn("⚠️ Installation will proceed due to 'warn' mode.");
+          if (config.mode === "block" && highestSeverity >= 3) {
+            console.error(`For security, the package ${pkg} was uninstalled. Rason: This package has high or critical vulnerabilities.`);
+            execSync(`npm uninstall ${pkg} --no-audit`, { stdio: "inherit" });
 
+          }
+          if (config.mode === "warn") console.warn("⚠️ Installation will proceed due to 'warn' mode.");
         } else {
-          console.log(`✅ No vulnerabilities found for ${pkg}@${version}`);
+          console.log(`✅ No vulnerabilities found for ${pkg}`);
         }
       } catch (_) { }
     }
@@ -161,11 +251,27 @@ async function checkVulnerabilities(pkg, version) {
 }
 
 
+async function auditPackage(pkgSpec, version) {
+  const [pkg] = splitPkgSpec(pkgSpec);
+
+  try {
+
+    await checkVulnerabilities(pkg);
+  } catch (error) {
+    console.error(`❌ Failed to audit ${pkg}@${version}: ${error.message}`);
+    process.exit(1);
+  }
+
+
+
+}
+
+
 async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
   const [pkg, versionRange] = splitPkgSpec(pkgSpec);
   if (config.exclude.includes(pkg)) {
     console.log(`⚠️  ${pkg} is excluded from restrictions. Installing without validation.`);
-    execSync(`npm install ${pkgSpec}${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { stdio: "inherit" });
+    execSync(`npm install ${pkgSpec} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { stdio: "inherit" });
     return;
   }
   const res = await fetch(`https://registry.npmjs.org/${pkg}`);
@@ -175,28 +281,47 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
   }
   const meta = await res.json();
   const versions = Object.keys(meta.versions);
+  const time = meta.time;
   let resolvedVersion;
-  if (!versionRange) resolvedVersion = meta["dist-tags"].latest;
-  else {
-    const max = semver.maxSatisfying(versions, versionRange);
-    if (!max) {
-      console.error(`❌ No version of ${pkg} satisfies ${versionRange}`);
-      process.exit(1);
-    }
-    resolvedVersion = max;
-  }
-  const published = new Date(meta.time[resolvedVersion]).getTime();
-  const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
-  if (ageDays < config.minAge) {
-    const msg = `🚫 ${pkg}@${resolvedVersion} is too new (${ageDays} days)`;
-    console.error(msg);
+
+  // Filter versions that meet the minAge
+  const minAge = config.minAge || 0;
+  const candidates = versions.filter(v => {
+    const publishedDate = time[v];
+    if (!publishedDate) return false;
+    const published = new Date(publishedDate).getTime();
+    const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
+    return ageDays >= minAge;
+  });
+
+  if (candidates.length === 0) {
+    console.error(`❌ No versions of ${pkg} are at least ${minAge} days old`);
     process.exit(1);
   }
 
-  await checkVulnerabilities(pkg, resolvedVersion);
+  if (!versionRange) {
+    // If no range is specified, take the latest valid version
+    resolvedVersion = semver.maxSatisfying(candidates, "*");
+  } else {
+    // If a range is specified, take the latest version within the range and valid
+    const candidateInRange = candidates.filter(v => semver.satisfies(v, versionRange));
+    if (candidateInRange.length === 0) {
+      console.error(`❌ No version of ${pkg} satisfies "${versionRange}" and is at least ${minAge} days old`);
+      process.exit(1);
+    }
+    resolvedVersion = semver.maxSatisfying(candidateInRange, "*");
+  }
+
+  const publishedDate = time[resolvedVersion];
+  const published = new Date(publishedDate).getTime();
+  const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
+
+  console.log(`✅ Resolved version: ${pkg}@${resolvedVersion} (published ${ageDays} days ago)`);
+
 
   console.log(`✅ Installing ${pkg}@${resolvedVersion} (published ${ageDays} days ago)`);
   execSync(`npm install ${pkg}@${resolvedVersion} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { stdio: "inherit" });
+  await checkVulnerabilities(pkg);
 }
 
 
@@ -208,5 +333,24 @@ async function run(packages, asDev = false, exact = false) {
   }
   for (const pkgSpec of packages) {
     await checkAndInstall(pkgSpec, asDev, exact);
+  }
+}
+
+async function runAudit(argv) {
+  if (argv["min-age"]) {
+    try {
+      config.minAge = parseMinAge(argv["min-age"]);
+
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+  }
+  if (!argv.packages || argv.packages.length === 0) {
+    console.error("❌ You must specify at least one package to install");
+    process.exit(1);
+  }
+  for (const pkgSpec of argv.packages) {
+    await auditPackage(pkgSpec);
   }
 }
