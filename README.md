@@ -42,6 +42,16 @@ To install a package as a devDependency, use the `--dev` or `-D` flag:
 guardian install webpack --dev
 ```
 
+If you want to update packages, you can use the `update` command:
+```bash
+guardian update --min-age 30
+```
+
+if you use the config file, you can just run:
+```bash
+guardian update
+```
+
 ## Use config file
 
 You can create a `guardian.config.json` file in your project root to set default options. For example:
@@ -57,6 +67,12 @@ You can create a `guardian.config.json` file in your project root to set default
   "exactInstall": false
 }
 ```
+### Create a config file with default values
+
+```bash
+guardian init
+```
+
 ### Configuration Options
 - `minAge`: Default minimum age in days for packages. This can be overridden by the `--min-age` flag in the CLI. valid formats are:
   - `0` (days) integer
