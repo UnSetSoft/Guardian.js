@@ -79,6 +79,47 @@ const argv = yargs(hideBin(process.argv))
           describe: "Minimum version age (e.g. 30, 1d, 1w, 1m, 24h, 24hs)",
         }),
     (argv) => runAudit(argv)
+)
+  .command("init", "Create a default guardian.config.json file", () => {
+    const defaultConfig = {
+      minAge: "1d",
+      exclude: [],
+      exactInstall: true,
+    };
+    const filePath = path.join(process.cwd(), "guardian.config.json");
+    if (existsSync(filePath)) {
+      console.error("❌ guardian.config.json already exists in this directory.");
+      process.exit(1);
+    }
+    try {
+      require("fs").writeFileSync(filePath, JSON.stringify(defaultConfig, null, 2));
+      console.log("✅ guardian.config.json created with default settings.");
+    } catch (err) {
+      console.error("❌ Error creating guardian.config.json:", err.message);
+      process.exit(1);
+    }
+  })
+  .command(
+    "update",
+    "Update installed packages (or all with --all) to the latest safe version",
+    (y) =>
+      y
+        .option("all", {
+          type: "boolean",
+          describe: "Update all dependencies from package.json",
+          default: true,
+        })
+        .option("min-age", {
+          alias: "m",
+          type: "string",
+          describe: "Minimum version age (e.g. 30, 1d, 1w, 1m, 24h, 24hs)",
+        })
+        .option("exact", {
+          type: "boolean",
+          describe: "Install exact version (--save-exact)",
+          default: false,
+        }),
+    (argv) => Update(argv)
   )
   .demandCommand(1, "You must specify a command")
   .help()
@@ -126,6 +167,112 @@ function splitPkgSpec(pkgSpec) {
   } else {
     if (atIndex > 0) return [pkgSpec.slice(0, atIndex), pkgSpec.slice(atIndex + 1)];
     return [pkgSpec, null];
+  }
+}
+
+async function checkAndUpdate(pkg, asDev = false, exact = false) {
+  if (config.exclude.includes(pkg)) {
+    console.log(`⚠️  ${pkg} is excluded from restrictions. Updating without validation.`);
+    execSync(`npm install ${pkg}@latest --silent --no-audit ${asDev ? "--save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { stdio: "inherit" });
+    return;
+  }
+
+  const res = await fetch(`https://registry.npmjs.org/${pkg}`);
+  if (!res.ok) {
+    console.error(`❌ Failed to fetch metadata for ${pkg}`);
+    process.exit(1);
+  }
+  const meta = await res.json();
+  const versions = Object.keys(meta.versions);
+  const time = meta.time;
+
+  // Filtrar versiones que cumplan con el requisito de antigüedad
+  const candidates = versions.filter((v) => {
+    const publishedDate = time[v];
+    if (!publishedDate) return false;
+    const published = new Date(publishedDate).getTime();
+    const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
+    return ageDays >= config.minAge;
+  });
+
+  if (candidates.length === 0) {
+    console.error(`❌ No versions of ${pkg} are at least ${config.minAge} days old`);
+    return;
+  }
+
+  // Resolver la última versión válida
+  const latestValidVersion = semver.maxSatisfying(candidates, "*");
+  if (!latestValidVersion) {
+    console.error(`❌ Could not resolve a valid version for ${pkg}`);
+    return;
+  }
+
+  const installedVersion = getInstalledVersion(pkg);
+  if (installedVersion && semver.eq(installedVersion, latestValidVersion)) {
+    console.log(`✅ ${pkg}@${latestValidVersion} is already installed and meets the minimum age requirement.`);
+    return;
+  }
+
+  const publishedDate = time[latestValidVersion];
+  const published = new Date(publishedDate).getTime();
+  const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
+
+  console.log(`⬆️  Updating ${pkg} to ${latestValidVersion} (published ${ageDays} days ago)`);
+  execSync(`npm install ${pkg}@${latestValidVersion} --silent --no-audit ${asDev ? "--save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { stdio: "inherit" });
+
+  await checkVulnerabilities(pkg);
+}
+
+function getInstalledVersion(pkg) {
+  try {
+    const pkgJsonPath = path.join(process.cwd(), "node_modules", pkg, "package.json");
+    if (existsSync(pkgJsonPath)) {
+      const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
+      return pkgJson.version;
+    }
+  } catch (err) {
+    console.error(`❌ Error checking installed version for ${pkg}: ${err.message}`);
+  }
+  return null;
+}
+
+async function Update(argv) {
+  if (argv["min-age"]) {
+    try {
+      console.log("Update command is not perfect, and can have some issues.")
+      config.minAge = parseMinAge(argv["min-age"]);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+  }
+
+  let packages = argv.packages;
+
+  if (argv.all) {
+    const pkgPath = path.join(process.cwd(), "package.json");
+    if (!existsSync(pkgPath)) {
+      console.error("❌ No package.json found in current directory");
+      process.exit(1);
+    }
+    const pkgJson = JSON.parse(readFileSync(pkgPath, "utf8"));
+    const deps = Object.keys(pkgJson.dependencies || {});
+    const devDeps = Object.keys(pkgJson.devDependencies || {});
+    packages = [...deps, ...devDeps];
+    if (packages.length === 0) {
+      console.log("✅ No dependencies found to update");
+      return;
+    }
+    console.log(`📦 Found ${packages.length} dependencies in package.json`);
+  }
+
+  if (!packages || packages.length === 0) {
+    console.error("❌ You must specify at least one package to update or use --all");
+    process.exit(1);
+  }
+
+  for (const pkg of packages) {
+    await checkAndUpdate(pkg, argv.dev, argv.exact);
   }
 }
 
