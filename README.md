@@ -52,6 +52,13 @@ if you use the config file, you can just run:
 guardian update
 ```
 
+To use a package with npx, you can use:
+
+```bash
+guardian use <package> [args..]
+```
+`guardian use` is affected by the “mode” setting. Be careful when using it if you use ‘warn’ or “off.” Also, this command does not use audit to remove it. 
+
 ## Use config file
 
 You can create a `guardian.config.json` file in your project root to set default options. For example:
@@ -64,7 +71,7 @@ You can create a `guardian.config.json` file in your project root to set default
     "react",
     "lodash"
   ],
-  "exactInstall": false
+  "exactInstall": false,
 }
 ```
 ### Create a config file with default values
