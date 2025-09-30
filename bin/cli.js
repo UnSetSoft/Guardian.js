@@ -14,7 +14,7 @@ let config = {
   minAge: 0,
   mode: "block",
   exclude: [],
-  exactInstall: false,
+  exactInstall: false
 };
 
 const configFiles = ["guardian.config.json", ".guardianrc.json"];
@@ -120,6 +120,21 @@ const argv = yargs(hideBin(process.argv))
           default: false,
         }),
     (argv) => Update(argv)
+)
+  .command("use [package]", "allow developers to execute Node.js packages directly from the npm registry without needing to globally install them", (y) =>
+    y
+      .option("package", {
+
+        type: "string",
+        describe: "",
+
+      })
+      .option("min-age", {
+        alias: "m",
+        type: "string",
+        describe: "Minimum version age (e.g. 30, 1d, 1w, 1m, 24h, 24hs)",
+      }),
+    (argv) => runNPX(argv)
   )
   .demandCommand(1, "You must specify a command")
   .help()
@@ -413,6 +428,54 @@ async function auditPackage(pkgSpec, version) {
 
 }
 
+async function resolveSafeVersion(pkgSpec) {
+  const [pkg, versionRange] = splitPkgSpec(pkgSpec);
+  if (config.exclude.includes(pkg)) {
+    console.log(`⚠️  ${pkg} is excluded from restrictions. Running without validation.`);
+    return pkgSpec; // devolver tal cual
+  }
+
+  const res = await fetch(`https://registry.npmjs.org/${pkg}`);
+  if (!res.ok) {
+    throw new Error(`❌ Failed to fetch metadata for ${pkg}`);
+  }
+  const meta = await res.json();
+  const versions = Object.keys(meta.versions);
+  const time = meta.time;
+
+  const minAge = config.minAge || 0;
+  const candidates = versions.filter(v => {
+    const publishedDate = time[v];
+    if (!publishedDate) return false;
+    const published = new Date(publishedDate).getTime();
+    const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
+    return ageDays >= minAge;
+  });
+
+  if (candidates.length === 0) {
+    throw new Error(`❌ No versions of ${pkg} are at least ${minAge} days old`);
+  }
+
+  let resolvedVersion;
+  if (!versionRange) {
+    resolvedVersion = semver.maxSatisfying(candidates, "*");
+  } else {
+    const candidateInRange = candidates.filter(v => semver.satisfies(v, versionRange));
+    if (candidateInRange.length === 0) {
+      throw new Error(`❌ No version of ${pkg} satisfies "${versionRange}" and is at least ${minAge} days old`);
+    }
+    resolvedVersion = semver.maxSatisfying(candidateInRange, "*");
+  }
+
+  const publishedDate = time[resolvedVersion];
+  const published = new Date(publishedDate).getTime();
+  const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
+
+  console.log(`✅ Resolved version: ${pkg}@${resolvedVersion} (published ${ageDays} days ago)`);
+
+  return `${pkg}@${resolvedVersion}`;
+}
+
 
 async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
   const [pkg, versionRange] = splitPkgSpec(pkgSpec);
@@ -499,5 +562,62 @@ async function runAudit(argv) {
   }
   for (const pkgSpec of argv.packages) {
     await auditPackage(pkgSpec);
+  }
+}
+
+async function runNPX(argv) {
+  const validModes = ["block", "warn", "off"];
+  if (!validModes.includes(config.mode)) {
+    console.error(`❌ Invalid mode in configuration: ${config.mode}. Valid options are: ${validModes.join(", ")}`);
+    process.exit(1);
+  }
+  if (argv["min-age"]) {
+    try {
+      config.minAge = parseMinAge(argv["min-age"]);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+  }
+
+  const basePkg = argv.package
+
+  let safePkg;
+  let confirm = ""
+
+  try {
+    safePkg = await resolveSafeVersion(basePkg);
+
+    const args = argv.args ? argv.args.join(" ") : "";
+
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+  if (config.mode === "warn") {
+    console.log(`⚠️ ${pkg} will use/install without user confirmation. You will use this package at your own risk.`);
+    confirm = "--yes"
+  } else if (config.mode === "off") {
+    confirm = "--yes"
+  } else {
+    confirm = ""
+  }
+
+  const args = argv.args ? argv.args.join(" ") : "";
+
+  try {
+    execSync(`npx ${confirm} ${safePkg} ${args} --silent`, { stdio: "inherit" });
+
+  } catch (err) {
+
+    if (err.status === 1) {
+      console.error(`❌ Installation/use of ${basePkg} was canceled (user or process canceled it).`);
+    } else if (err.stderr) {
+      console.error(`❌ Installation/use of ${basePkg} failed.`);
+    } else {
+      console.error(`❌ Installation/use of ${basePkg} was canceled due to an unknown error.`);
+    }
+
+    process.exit(1);
   }
 }
