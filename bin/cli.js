@@ -587,9 +587,6 @@ async function runNPX(argv) {
 
   try {
     safePkg = await resolveSafeVersion(basePkg);
-
-    const args = argv.args ? argv.args.join(" ") : "";
-
   } catch (err) {
     console.error(err.message);
     process.exit(1);
