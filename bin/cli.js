@@ -21,7 +21,13 @@ function execCmdSync(cmd, options = {}) {
 
     const encoding = options.encoding || "utf8";
     const out = execSync(cmd, { encoding, stdio: "pipe", shell: true });
-    if (out && !options.suppressOutput) process.stdout.write(out);
+    // Solo imprimir si no es salida JSON de npm audit
+    if (out && !options.suppressOutput) {
+      // Si el comando es 'npm audit --json', no imprimir el resultado
+      if (!(cmd.includes('npm audit') && cmd.includes('--json'))) {
+        process.stdout.write(out);
+      }
+    }
     return out;
   } catch (err) {
     // Check if error is ERESOLVE (peer dependency conflict)
@@ -40,15 +46,6 @@ function execCmdSync(cmd, options = {}) {
         if (out && !options.suppressOutput) process.stdout.write(out);
         return out;
       } catch (retryErr) {
-        const retryErrOutput = retryErr.stdout?.toString() || retryErr.stderr?.toString() || "";
-        // Check if still ERESOLVE after retry
-        if (retryErr.status === 1 && retryErrOutput.includes("ERESOLVE")) {
-          if (retryErr.stdout) process.stdout.write(retryErr.stdout.toString());
-          if (retryErr.stderr) process.stderr.write(retryErr.stderr.toString());
-          const err = new Error(`❌ Unresolvable peer dependency conflict. Even with --legacy-peer-deps, this package cannot be installed due to incompatible dependencies.`);
-          err.code = "ERESOLVE_UNRESOLVABLE";
-          throw err;
-        }
         if (retryErr.stdout) process.stdout.write(retryErr.stdout.toString());
         if (retryErr.stderr) process.stderr.write(retryErr.stderr.toString());
         console.error(`❌ Command failed even with --legacy-peer-deps: ${cmd}`);
@@ -58,10 +55,14 @@ function execCmdSync(cmd, options = {}) {
     }
 
     // Handle other errors normally
-    if (err.stdout) process.stdout.write(err.stdout.toString());
-    if (err.stderr) process.stderr.write(err.stderr.toString());
-    console.error(`❌ Command failed: ${cmd}`);
-    if (typeof err.status === "number") console.error(`Exit status: ${err.status}`);
+    // Evitar imprimir el JSON si el comando es npm audit --json
+    if (err.stdout && !(cmd.includes('npm audit') && cmd.includes('--json'))) process.stdout.write(err.stdout.toString());
+    if (err.stderr && !(cmd.includes('npm audit') && cmd.includes('--json'))) process.stderr.write(err.stderr.toString());
+    // No mostrar mensaje de error si es npm audit --json
+    if (!(cmd.includes('npm audit') && cmd.includes('--json'))) {
+      console.error(`❌ Command failed: ${cmd}`);
+      if (typeof err.status === "number") console.error(`Exit status: ${err.status}`);
+    }
     throw err;
   }
 }
@@ -279,26 +280,14 @@ async function checkAndUpdate(pkg, asDev = false, exact = false) {
   }
   if (isExcluded) {
     console.log(`⚠️  ${pkg} is excluded from restrictions. Updating without validation.`);
-    try {
-      execCmdSync(`npm install ${pkg}@latest --silent --no-audit ${asDev ? "--save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
-    } catch (err) {
-      if (err.code === "ERESOLVE_UNRESOLVABLE") {
-        console.error(err.message);
-        return;
-      }
-      throw err;
-    }
+    execCmdSync(`npm install ${pkg}@latest --silent --no-audit ${asDev ? "--save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
     return;
   }
 
   const res = await fetch(`https://registry.npmjs.org/${pkg}`);
   if (!res.ok) {
-    if (res.status === 404) {
-      console.error(`❌ Package "${pkg}" not found in npm registry. Please verify the package name is correct.`);
-      return;
-    }
-    console.error(`❌ Failed to fetch metadata for ${pkg} (HTTP ${res.status})`);
-    return;
+    console.error(`❌ Failed to fetch metadata for ${pkg}`);
+    process.exit(1);
   }
   const meta = await res.json();
   const versions = Object.keys(meta.versions);
@@ -336,16 +325,7 @@ async function checkAndUpdate(pkg, asDev = false, exact = false) {
   const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
 
   console.log(`⬆️  Updating ${pkg} to ${latestValidVersion} (published ${ageDays} days ago)`);
-  try {
-    execCmdSync(`npm install ${pkg}@${latestValidVersion} --silent --no-audit ${asDev ? "--save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
-  } catch (err) {
-    if (err.code === "ERESOLVE_UNRESOLVABLE") {
-      console.error(err.message);
-      console.error(`⚠️  Try adding "${pkg}" to excludeUpdate in your guardian config to skip validation.`);
-      return;
-    }
-    throw err;
-  }
+  execCmdSync(`npm install ${pkg}@${latestValidVersion} --silent --no-audit ${asDev ? "--save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
 
   await checkVulnerabilities(pkg);
 }
@@ -414,15 +394,18 @@ const severityObj = {
 async function checkVulnerabilities(pkg) {
   try {
     const output = execCmdSync(`npm audit --json`, { encoding: "utf8", suppressOutput: true });
-    const audit = JSON.parse(output);
-
+    let audit;
+    try {
+      audit = JSON.parse(output);
+    } catch {
+      audit = null;
+    }
     // Acceso directo al paquete específico
-    const vuln = audit.vulnerabilities[pkg];
+    const vuln = audit && audit.vulnerabilities ? audit.vulnerabilities[pkg] : null;
 
     if (vuln) {
       const getSeverityValue = (level) => severityObj[level] || 1;
       const vulnSeverity = getSeverityValue(vuln.severity);
-
       const viaSeverity = Array.isArray(vuln.via)
         ? vuln.via.reduce((max, issue) => {
           if (typeof issue === "object" && issue.severity) {
@@ -432,7 +415,6 @@ async function checkVulnerabilities(pkg) {
           return max;
         }, 0)
         : 0;
-
       const highestSeverity = Math.max(vulnSeverity, viaSeverity);
 
       if (vuln.via && vuln.via.length >= 1) {
@@ -540,10 +522,7 @@ async function resolveSafeVersion(pkgSpec) {
 
   const res = await fetch(`https://registry.npmjs.org/${pkg}`);
   if (!res.ok) {
-    if (res.status === 404) {
-      throw new Error(`❌ Package "${pkg}" not found in npm registry. Please verify the package name is correct.`);
-    }
-    throw new Error(`❌ Failed to fetch metadata for ${pkg} (HTTP ${res.status})`);
+    throw new Error(`❌ Failed to fetch metadata for ${pkg}`);
   }
   const meta = await res.json();
   const versions = Object.keys(meta.versions);
@@ -592,24 +571,13 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
   }
   if (config.exclude.includes(pkg)) {
     console.log(`⚠️  ${pkg} is excluded from restrictions. Installing without validation.`);
-    try {
-      execCmdSync(`npm install ${pkgSpec} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
-    } catch (err) {
-      if (err.code === "ERESOLVE_UNRESOLVABLE") {
-        console.error(err.message);
-        return;
-      }
-      throw err;
-    }
+    execCmdSync(`npm install ${pkgSpec} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
     return;
   }
+
   const res = await fetch(`https://registry.npmjs.org/${pkg}`);
   if (!res.ok) {
-    if (res.status === 404) {
-      console.error(`❌ Package "${pkg}" not found in npm registry. Please verify the package name is correct.`);
-      return;
-    }
-    console.error(`❌ Failed to fetch metadata for ${pkg} (HTTP ${res.status})`);
+    console.error(`❌ No se pudo obtener información de ${pkg}`);
     return;
   }
   const meta = await res.json();
@@ -617,7 +585,7 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
   const time = meta.time;
   let resolvedVersion;
 
-  // Filter versions that meet the minAge
+  // Filtrar versiones que cumplen minAge
   const minAge = config.minAge || 0;
   const candidates = versions.filter(v => {
     const publishedDate = time[v];
@@ -627,19 +595,70 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
     return ageDays >= minAge;
   });
 
+  // Helper para sugerir versiones alternativas
+  function suggestAlternativeVersions(allVersions, timeObj, minAge, versionRange) {
+    // Filtrar por minAge
+    const validVersions = allVersions.filter(v => {
+      const publishedDate = timeObj[v];
+      if (!publishedDate) return false;
+      const published = new Date(publishedDate).getTime();
+      const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
+      return ageDays >= minAge;
+    });
+    // Si hay un rango, filtrar por rango
+    let filtered = validVersions;
+    if (versionRange) {
+      filtered = validVersions.filter(v => semver.satisfies(v, versionRange));
+    }
+    // Ordenar por fecha de publicación descendente
+    filtered.sort((a, b) => {
+      const ta = new Date(timeObj[a]).getTime();
+      const tb = new Date(timeObj[b]).getTime();
+      return tb - ta;
+    });
+    // Tomar hasta 3 versiones
+    return filtered.slice(0, 3);
+  }
+
   if (candidates.length === 0) {
-    console.error(`❌ No versions of ${pkg} are at least ${minAge} days old`);
+    console.error(`❌ No se encontraron versiones de ${pkg} con al menos ${minAge} días de antigüedad.`);
+    const suggestions = suggestAlternativeVersions(versions, time, 0, versionRange);
+    if (suggestions.length > 0) {
+      console.log(`🔎 Sugerencias de versiones más recientes disponibles:`);
+      suggestions.forEach((v, i) => {
+        const age = Math.floor((Date.now() - new Date(time[v]).getTime()) / (1000 * 60 * 60 * 24));
+        console.log(`  ${i + 1}. ${pkg}@${v} (publicada hace ${age} días)`);
+      });
+      console.log(`ℹ️  Puedes consultar todas las versiones disponibles y su historial en: https://www.npmjs.com/package/${pkg}?activeTab=versions`);
+    } else {
+      console.log(`No hay versiones alternativas disponibles.`);
+    }
+    console.log(`⚠️  No se puede realizar 'audit' hasta que el paquete esté instalado.`);
     return;
   }
 
   if (!versionRange) {
-    // If no range is specified, take the latest valid version
     resolvedVersion = semver.maxSatisfying(candidates, "*");
   } else {
-    // If a range is specified, take the latest version within the range and valid
     const candidateInRange = candidates.filter(v => semver.satisfies(v, versionRange));
     if (candidateInRange.length === 0) {
-      console.error(`❌ No version of ${pkg} satisfies "${versionRange}" and is at least ${minAge} days old`);
+      if (config.minAge && config.minAge > 0) {
+        console.error(`❌ No se encontró ninguna versión de ${pkg} que cumpla "${versionRange}" y tenga al menos ${minAge} días de antigüedad.`);
+      } else {
+        console.error(`❌ No se encontró ninguna versión de ${pkg} que cumpla "${versionRange}".`);
+      }
+      const suggestions = suggestAlternativeVersions(candidates, time, minAge, null);
+      if (suggestions.length > 0) {
+        console.log(`🔎 Sugerencias de versiones más cercanas disponibles:`);
+        suggestions.forEach((v, i) => {
+          const age = Math.floor((Date.now() - new Date(time[v]).getTime()) / (1000 * 60 * 60 * 24));
+          console.log(`  ${i + 1}. ${pkg}@${v} (publicada hace ${age} días)`);
+        });
+        console.log(`ℹ️  Puedes consultar todas las versiones disponibles y su historial en: https://www.npmjs.com/package/${pkg}?activeTab=versions`);
+      } else {
+        console.log(`No hay versiones alternativas disponibles.`);
+      }
+      console.log(`⚠️  No se puede realizar 'audit' hasta que el paquete esté instalado.`);
       return;
     }
     resolvedVersion = semver.maxSatisfying(candidateInRange, "*");
@@ -649,20 +668,9 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
   const published = new Date(publishedDate).getTime();
   const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
 
-  console.log(`✅ Resolved version: ${pkg}@${resolvedVersion} (published ${ageDays} days ago)`);
-
-
-  console.log(`✅ Installing ${pkg}@${resolvedVersion} (published ${ageDays} days ago)`);
-  try {
-    execCmdSync(`npm install ${pkg}@${resolvedVersion} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
-  } catch (err) {
-    if (err.code === "ERESOLVE_UNRESOLVABLE") {
-      console.error(err.message);
-      console.error(`⚠️  Try adding "${pkg}" to excludeInstall in your guardian config to skip validation.`);
-      return;
-    }
-    throw err;
-  }
+  console.log(`✅ Versión recomendada: ${pkg}@${resolvedVersion} (publicada hace ${ageDays} días)`);
+  console.log(`✅ Instalando ${pkg}@${resolvedVersion} (publicada hace ${ageDays} días)`);
+  execCmdSync(`npm install ${pkg}@${resolvedVersion} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
   await checkVulnerabilities(pkg);
 }
 
