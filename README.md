@@ -30,6 +30,8 @@ guardian init
 
 This creates `guardian.config.json` with sensible defaults.
 
+> Note: If you run `guardian init` and `guardian.config.json` is created, you don't need to pass `--min-age` or other options to the `install`, `update`, or `use` commands—the values in the configuration file will be used. The only practical exception is `--all` (e.g., `guardian install --all`), which indicates to operate on all dependencies in `package.json`.
+
 ### 2. Install Packages Safely
 
 Install one or more packages with a minimum age requirement:
@@ -131,6 +133,10 @@ guardian audit mongoose react
 guardian audit next --min-age 7d
 ```
 
+Notes:
+- `guardian audit` uses `npm audit --json` internally but suppresses the raw JSON output. Instead, it will display a readable summary of the vulnerabilities detected for the packages checked.
+- Remember that `audit` can only check for vulnerabilities in a package that is already installed; if you need to audit a specific version, first install it with `guardian install`.
+
 ### `use` - Run packages with age verification
 
 ```bash
@@ -146,14 +152,6 @@ guardian use create-react-app my-app
 # Run with arguments
 guardian use ts-node --esm script.ts
 ```
-
-### `init` - Create configuration file
-
-```bash
-guardian init
-```
-
-Creates a `guardian.config.json` with default settings in your project root.
 
 ## Configuration File
 
@@ -291,6 +289,9 @@ Solutions:
 - Use `guardian init` to set a reasonable default (1 day)
 - Pass `--min-age 0` to install the latest version without age restriction
 
+Additional info:
+- If Guardian cannot find any versions that meet the `minAge` or the requested specification, it will display up to 3 suggestions and a link to the version history on npm so you can manually review more alternatives.
+
 ### Version Specification Issues
 
 If a specific version doesn't exist:
@@ -304,6 +305,8 @@ guardian install lodash@4.17.21
 ```
 
 Guardian will check the npm registry and only show versions that meet your minimum age requirement.
+
+Tip: When a specific version is not available, Guardian attempts to suggest up to 3 nearby versions that satisfy your `minAge` (if any). Use the npm versions page to inspect the full history: `https://www.npmjs.com/package/<package>?activeTab=versions`.
 
 ## Min-Age Formats
 

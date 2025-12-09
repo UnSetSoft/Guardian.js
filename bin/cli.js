@@ -21,9 +21,9 @@ function execCmdSync(cmd, options = {}) {
 
     const encoding = options.encoding || "utf8";
     const out = execSync(cmd, { encoding, stdio: "pipe", shell: true });
-    // Solo imprimir si no es salida JSON de npm audit
+    // Only print if it's not npm audit JSON output
     if (out && !options.suppressOutput) {
-      // Si el comando es 'npm audit --json', no imprimir el resultado
+      // If the command is 'npm audit --json', don't print the output
       if (!(cmd.includes('npm audit') && cmd.includes('--json'))) {
         process.stdout.write(out);
       }
@@ -55,10 +55,10 @@ function execCmdSync(cmd, options = {}) {
     }
 
     // Handle other errors normally
-    // Evitar imprimir el JSON si el comando es npm audit --json
+    // Avoid printing the JSON if the command is npm audit --json
     if (err.stdout && !(cmd.includes('npm audit') && cmd.includes('--json'))) process.stdout.write(err.stdout.toString());
     if (err.stderr && !(cmd.includes('npm audit') && cmd.includes('--json'))) process.stderr.write(err.stderr.toString());
-    // No mostrar mensaje de error si es npm audit --json
+    // Don't show an error message if it's npm audit --json
     if (!(cmd.includes('npm audit') && cmd.includes('--json'))) {
       console.error(`❌ Command failed: ${cmd}`);
       if (typeof err.status === "number") console.error(`Exit status: ${err.status}`);
@@ -293,7 +293,7 @@ async function checkAndUpdate(pkg, asDev = false, exact = false) {
   const versions = Object.keys(meta.versions);
   const time = meta.time;
 
-  // Filtrar versiones que cumplan con el requisito de antigüedad
+  // Filter versions that meet the age requirement
   const candidates = versions.filter((v) => {
     const publishedDate = time[v];
     if (!publishedDate) return false;
@@ -307,7 +307,7 @@ async function checkAndUpdate(pkg, asDev = false, exact = false) {
     return;
   }
 
-  // Resolver la última versión válida
+  // Resolve the latest valid version
   const latestValidVersion = semver.maxSatisfying(candidates, "*");
   if (!latestValidVersion) {
     console.error(`❌ Could not resolve a valid version for ${pkg}`);
@@ -400,7 +400,7 @@ async function checkVulnerabilities(pkg) {
     } catch {
       audit = null;
     }
-    // Acceso directo al paquete específico
+    // Direct access to the specific package
     const vuln = audit && audit.vulnerabilities ? audit.vulnerabilities[pkg] : null;
 
     if (vuln) {
@@ -517,7 +517,7 @@ async function resolveSafeVersion(pkgSpec) {
   const [pkg, versionRange] = splitPkgSpec(pkgSpec);
   if (config.exclude.includes(pkg)) {
     console.log(`⚠️  ${pkg} is excluded from restrictions. Running without validation.`);
-    return pkgSpec; // devolver tal cual
+    return pkgSpec; // return as-is
   }
 
   const res = await fetch(`https://registry.npmjs.org/${pkg}`);
@@ -577,7 +577,7 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
 
   const res = await fetch(`https://registry.npmjs.org/${pkg}`);
   if (!res.ok) {
-    console.error(`❌ No se pudo obtener información de ${pkg}`);
+    console.error(`❌ Failed to fetch metadata for ${pkg}`);
     return;
   }
   const meta = await res.json();
@@ -585,7 +585,7 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
   const time = meta.time;
   let resolvedVersion;
 
-  // Filtrar versiones que cumplen minAge
+  // Filter versions that meet minAge
   const minAge = config.minAge || 0;
   const candidates = versions.filter(v => {
     const publishedDate = time[v];
@@ -595,9 +595,9 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
     return ageDays >= minAge;
   });
 
-  // Helper para sugerir versiones alternativas
+  // Helper to suggest alternative versions
   function suggestAlternativeVersions(allVersions, timeObj, minAge, versionRange) {
-    // Filtrar por minAge
+    // Filter by minAge
     const validVersions = allVersions.filter(v => {
       const publishedDate = timeObj[v];
       if (!publishedDate) return false;
@@ -605,35 +605,35 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
       const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
       return ageDays >= minAge;
     });
-    // Si hay un rango, filtrar por rango
+    // If there is a range, filter by range
     let filtered = validVersions;
     if (versionRange) {
       filtered = validVersions.filter(v => semver.satisfies(v, versionRange));
     }
-    // Ordenar por fecha de publicación descendente
+    // Sort by publish date descending
     filtered.sort((a, b) => {
       const ta = new Date(timeObj[a]).getTime();
       const tb = new Date(timeObj[b]).getTime();
       return tb - ta;
     });
-    // Tomar hasta 3 versiones
+    // Take up to 3 versions
     return filtered.slice(0, 3);
   }
 
   if (candidates.length === 0) {
-    console.error(`❌ No se encontraron versiones de ${pkg} con al menos ${minAge} días de antigüedad.`);
+    console.error(`❌ No versions of ${pkg} were found that are at least ${minAge} days old.`);
     const suggestions = suggestAlternativeVersions(versions, time, 0, versionRange);
     if (suggestions.length > 0) {
-      console.log(`🔎 Sugerencias de versiones más recientes disponibles:`);
+      console.log(`🔎 Suggested recent versions:`);
       suggestions.forEach((v, i) => {
         const age = Math.floor((Date.now() - new Date(time[v]).getTime()) / (1000 * 60 * 60 * 24));
-        console.log(`  ${i + 1}. ${pkg}@${v} (publicada hace ${age} días)`);
+        console.log(`  ${i + 1}. ${pkg}@${v} (published ${age} days ago)`);
       });
-      console.log(`ℹ️  Puedes consultar todas las versiones disponibles y su historial en: https://www.npmjs.com/package/${pkg}?activeTab=versions`);
+      console.log(`ℹ️  You can view all available versions and their history at: https://www.npmjs.com/package/${pkg}?activeTab=versions`);
     } else {
-      console.log(`No hay versiones alternativas disponibles.`);
+      console.log(`No alternative versions available.`);
     }
-    console.log(`⚠️  No se puede realizar 'audit' hasta que el paquete esté instalado.`);
+    console.log(`⚠️  Audit cannot run until the package is installed.`);
     return;
   }
 
@@ -641,24 +641,24 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
     resolvedVersion = semver.maxSatisfying(candidates, "*");
   } else {
     const candidateInRange = candidates.filter(v => semver.satisfies(v, versionRange));
-    if (candidateInRange.length === 0) {
+      if (candidateInRange.length === 0) {
       if (config.minAge && config.minAge > 0) {
-        console.error(`❌ No se encontró ninguna versión de ${pkg} que cumpla "${versionRange}" y tenga al menos ${minAge} días de antigüedad.`);
+        console.error(`❌ No version of ${pkg} was found that satisfies "${versionRange}" and is at least ${minAge} days old.`);
       } else {
-        console.error(`❌ No se encontró ninguna versión de ${pkg} que cumpla "${versionRange}".`);
+        console.error(`❌ No version of ${pkg} was found that satisfies "${versionRange}".`);
       }
       const suggestions = suggestAlternativeVersions(candidates, time, minAge, null);
       if (suggestions.length > 0) {
-        console.log(`🔎 Sugerencias de versiones más cercanas disponibles:`);
+        console.log(`🔎 Suggested closest matching versions:`);
         suggestions.forEach((v, i) => {
           const age = Math.floor((Date.now() - new Date(time[v]).getTime()) / (1000 * 60 * 60 * 24));
-          console.log(`  ${i + 1}. ${pkg}@${v} (publicada hace ${age} días)`);
+          console.log(`  ${i + 1}. ${pkg}@${v} (published ${age} days ago)`);
         });
-        console.log(`ℹ️  Puedes consultar todas las versiones disponibles y su historial en: https://www.npmjs.com/package/${pkg}?activeTab=versions`);
+        console.log(`ℹ️  You can view all available versions and their history at: https://www.npmjs.com/package/${pkg}?activeTab=versions`);
       } else {
-        console.log(`No hay versiones alternativas disponibles.`);
+        console.log(`No alternative versions available.`);
       }
-      console.log(`⚠️  No se puede realizar 'audit' hasta que el paquete esté instalado.`);
+      console.log(`⚠️  Audit cannot run until the package is installed.`);
       return;
     }
     resolvedVersion = semver.maxSatisfying(candidateInRange, "*");
@@ -668,8 +668,8 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
   const published = new Date(publishedDate).getTime();
   const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
 
-  console.log(`✅ Versión recomendada: ${pkg}@${resolvedVersion} (publicada hace ${ageDays} días)`);
-  console.log(`✅ Instalando ${pkg}@${resolvedVersion} (publicada hace ${ageDays} días)`);
+  console.log(`✅ Recommended version: ${pkg}@${resolvedVersion} (published ${ageDays} days ago)`);
+  console.log(`✅ Installing ${pkg}@${resolvedVersion} (published ${ageDays} days ago)`);
   execCmdSync(`npm install ${pkg}@${resolvedVersion} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
   await checkVulnerabilities(pkg);
 }
