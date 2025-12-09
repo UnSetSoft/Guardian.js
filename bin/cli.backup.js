@@ -40,15 +40,6 @@ function execCmdSync(cmd, options = {}) {
         if (out && !options.suppressOutput) process.stdout.write(out);
         return out;
       } catch (retryErr) {
-        const retryErrOutput = retryErr.stdout?.toString() || retryErr.stderr?.toString() || "";
-        // Check if still ERESOLVE after retry
-        if (retryErr.status === 1 && retryErrOutput.includes("ERESOLVE")) {
-          if (retryErr.stdout) process.stdout.write(retryErr.stdout.toString());
-          if (retryErr.stderr) process.stderr.write(retryErr.stderr.toString());
-          const err = new Error(`❌ Unresolvable peer dependency conflict. Even with --legacy-peer-deps, this package cannot be installed due to incompatible dependencies.`);
-          err.code = "ERESOLVE_UNRESOLVABLE";
-          throw err;
-        }
         if (retryErr.stdout) process.stdout.write(retryErr.stdout.toString());
         if (retryErr.stderr) process.stderr.write(retryErr.stderr.toString());
         console.error(`❌ Command failed even with --legacy-peer-deps: ${cmd}`);
@@ -279,26 +270,14 @@ async function checkAndUpdate(pkg, asDev = false, exact = false) {
   }
   if (isExcluded) {
     console.log(`⚠️  ${pkg} is excluded from restrictions. Updating without validation.`);
-    try {
-      execCmdSync(`npm install ${pkg}@latest --silent --no-audit ${asDev ? "--save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
-    } catch (err) {
-      if (err.code === "ERESOLVE_UNRESOLVABLE") {
-        console.error(err.message);
-        return;
-      }
-      throw err;
-    }
+    execCmdSync(`npm install ${pkg}@latest --silent --no-audit ${asDev ? "--save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
     return;
   }
 
   const res = await fetch(`https://registry.npmjs.org/${pkg}`);
   if (!res.ok) {
-    if (res.status === 404) {
-      console.error(`❌ Package "${pkg}" not found in npm registry. Please verify the package name is correct.`);
-      return;
-    }
-    console.error(`❌ Failed to fetch metadata for ${pkg} (HTTP ${res.status})`);
-    return;
+    console.error(`❌ Failed to fetch metadata for ${pkg}`);
+    process.exit(1);
   }
   const meta = await res.json();
   const versions = Object.keys(meta.versions);
@@ -336,16 +315,7 @@ async function checkAndUpdate(pkg, asDev = false, exact = false) {
   const ageDays = Math.floor((Date.now() - published) / (1000 * 60 * 60 * 24));
 
   console.log(`⬆️  Updating ${pkg} to ${latestValidVersion} (published ${ageDays} days ago)`);
-  try {
-    execCmdSync(`npm install ${pkg}@${latestValidVersion} --silent --no-audit ${asDev ? "--save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
-  } catch (err) {
-    if (err.code === "ERESOLVE_UNRESOLVABLE") {
-      console.error(err.message);
-      console.error(`⚠️  Try adding "${pkg}" to excludeUpdate in your guardian config to skip validation.`);
-      return;
-    }
-    throw err;
-  }
+  execCmdSync(`npm install ${pkg}@${latestValidVersion} --silent --no-audit ${asDev ? "--save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
 
   await checkVulnerabilities(pkg);
 }
@@ -540,10 +510,7 @@ async function resolveSafeVersion(pkgSpec) {
 
   const res = await fetch(`https://registry.npmjs.org/${pkg}`);
   if (!res.ok) {
-    if (res.status === 404) {
-      throw new Error(`❌ Package "${pkg}" not found in npm registry. Please verify the package name is correct.`);
-    }
-    throw new Error(`❌ Failed to fetch metadata for ${pkg} (HTTP ${res.status})`);
+    throw new Error(`❌ Failed to fetch metadata for ${pkg}`);
   }
   const meta = await res.json();
   const versions = Object.keys(meta.versions);
@@ -592,25 +559,13 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
   }
   if (config.exclude.includes(pkg)) {
     console.log(`⚠️  ${pkg} is excluded from restrictions. Installing without validation.`);
-    try {
-      execCmdSync(`npm install ${pkgSpec} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
-    } catch (err) {
-      if (err.code === "ERESOLVE_UNRESOLVABLE") {
-        console.error(err.message);
-        return;
-      }
-      throw err;
-    }
+    execCmdSync(`npm install ${pkgSpec} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
     return;
   }
   const res = await fetch(`https://registry.npmjs.org/${pkg}`);
   if (!res.ok) {
-    if (res.status === 404) {
-      console.error(`❌ Package "${pkg}" not found in npm registry. Please verify the package name is correct.`);
-      return;
-    }
-    console.error(`❌ Failed to fetch metadata for ${pkg} (HTTP ${res.status})`);
-    return;
+    console.error(`❌ Failed to fetch metadata for ${pkg}`);
+    process.exit(1);
   }
   const meta = await res.json();
   const versions = Object.keys(meta.versions);
@@ -629,7 +584,7 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
 
   if (candidates.length === 0) {
     console.error(`❌ No versions of ${pkg} are at least ${minAge} days old`);
-    return;
+    process.exit(1);
   }
 
   if (!versionRange) {
@@ -640,7 +595,7 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
     const candidateInRange = candidates.filter(v => semver.satisfies(v, versionRange));
     if (candidateInRange.length === 0) {
       console.error(`❌ No version of ${pkg} satisfies "${versionRange}" and is at least ${minAge} days old`);
-      return;
+      process.exit(1);
     }
     resolvedVersion = semver.maxSatisfying(candidateInRange, "*");
   }
@@ -653,16 +608,7 @@ async function checkAndInstall(pkgSpec, asDev = false, exact = false) {
 
 
   console.log(`✅ Installing ${pkg}@${resolvedVersion} (published ${ageDays} days ago)`);
-  try {
-    execCmdSync(`npm install ${pkg}@${resolvedVersion} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
-  } catch (err) {
-    if (err.code === "ERESOLVE_UNRESOLVABLE") {
-      console.error(err.message);
-      console.error(`⚠️  Try adding "${pkg}" to excludeInstall in your guardian config to skip validation.`);
-      return;
-    }
-    throw err;
-  }
+  execCmdSync(`npm install ${pkg}@${resolvedVersion} --silent --no-audit ${asDev ? " --save-dev" : ""}${exact || config.exactInstall ? " --save-exact" : ""}`, { inherit: true });
   await checkVulnerabilities(pkg);
 }
 
